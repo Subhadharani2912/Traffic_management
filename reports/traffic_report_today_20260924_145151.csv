@@ -1,0 +1,38 @@
+Session Summary
+filter,today
+total_sessions,1
+total_vehicles_recorded,0
+total_signal_cycles,0
+avg_vehicles_per_frame,35.6
+peak_vehicles_detected,54
+avg_waiting_time,18.6
+max_waiting_time,85.2
+avg_green_duration,29.8
+records_count,51
+
+Volume by Direction
+direction,count
+NORTH,514
+SOUTH,361
+EAST,392
+WEST,548
+
+Average Waiting Time by Direction
+direction,avg_wait
+NORTH,25.2
+SOUTH,10.6
+EAST,12.1
+WEST,26.5
+
+Signal Usage
+direction,count,avg_duration
+EAST,11,29.0
+NORTH,18,27.5
+SOUTH,14,40.0
+WEST,8,18.0
+
+Density Breakdown
+level,count
+HIGH,26
+LOW,20
+MEDIUM,5

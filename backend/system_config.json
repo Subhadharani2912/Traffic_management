@@ -1,0 +1,108 @@
+{
+  "confidence_threshold": 0.28,
+  "iou_threshold": 0.45,
+  "model_path": "C:\\Users\\vivek\\OneDrive\\ドキュメント\\Traffic_Management_System\\models\\yolov8n.pt",
+  "custom_model_path": "C:\\Users\\vivek\\OneDrive\\ドキュメント\\Traffic_Management_System\\models\\best.pt",
+  "target_classes": [
+    2,
+    3,
+    5,
+    7
+  ],
+  "min_green_time": 5,
+  "max_green_time": 40,
+  "yellow_time": 3,
+  "all_red_time": 1,
+  "headway_seconds": 2.2,
+  "start_window_seconds": 2.5,
+  "density_weight": 0.6,
+  "waiting_weight": 0.4,
+  "starvation_threshold_seconds": 45.0,
+  "waiting_speed_threshold": 3.5,
+  "density_low_max": 5,
+  "density_medium_max": 10,
+  "rois": {
+    "NORTH": [
+      [
+        0.35,
+        0
+      ],
+      [
+        0.65,
+        0
+      ],
+      [
+        0.65,
+        0.4
+      ],
+      [
+        0.35,
+        0.4
+      ]
+    ],
+    "SOUTH": [
+      [
+        0.35,
+        0.6
+      ],
+      [
+        0.65,
+        0.6
+      ],
+      [
+        0.65,
+        1
+      ],
+      [
+        0.35,
+        1
+      ]
+    ],
+    "EAST": [
+      [
+        0.6,
+        0.35
+      ],
+      [
+        1,
+        0.35
+      ],
+      [
+        1,
+        0.65
+      ],
+      [
+        0.6,
+        0.65
+      ]
+    ],
+    "WEST": [
+      [
+        0,
+        0.35
+      ],
+      [
+        0.4,
+        0.35
+      ],
+      [
+        0.4,
+        0.65
+      ],
+      [
+        0,
+        0.65
+      ]
+    ]
+  },
+  "intersection_box": [
+    0.0,
+    0.0,
+    1.0,
+    1.0
+  ],
+  "processing_fps": 15,
+  "active_source": "video",
+  "selected_video": "C:\\Users\\vivek\\OneDrive\\ドキュメント\\Traffic_Management_System\\videos\\input\\Screen Recording 2026-09-24 222321.mp4",
+  "adaptive_mode": true
+}
