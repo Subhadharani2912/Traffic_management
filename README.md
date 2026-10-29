@@ -1,87 +1,119 @@
-# AI Adaptive Traffic Management System
+# Adaptive Traffic Management System with Emergency Vehicle Priority
 
-A complete local traffic control project inspired by a four-way intersection reference video. The project combines Python FastAPI backend services, YOLO-based vehicle detection, adaptive traffic signal logic, and a React dashboard.
+An intelligent traffic management application that combines computer vision, vehicle tracking, and adaptive signal control to improve traffic flow at a four-way intersection. The system supports traffic video analysis and a simulation mode, with a React dashboard for monitoring traffic conditions and signal decisions.
 
-## Project Objective
+A key focus of this project is **emergency vehicle detection and priority handling**, allowing the system to incorporate emergency vehicles into its traffic-control decisions.
 
-This system is intended to:
-- accept a real traffic video or run a simulation,
-- detect vehicles using YOLO,
-- track vehicles across frames,
-- assign each vehicle to a direction (NORTH/SOUTH/EAST/WEST),
-- compute density, waiting time, and priority,
-- update traffic signals dynamically,
-- display results on a professional real-time dashboard.
+## Project Overview
 
-## Features
+Conventional traffic signals often rely on fixed timing, which may not reflect actual traffic conditions. This project explores a software-based approach in which traffic density, estimated waiting time, and vehicle priority are used to determine signal phases dynamically.
 
-- Real traffic video upload and processing
-- Four-way intersection simulation
-- YOLOv8 detection + tracking
-- Adaptive signal priority logic
-- Density analysis and waiting-time estimation
-- SQLite analytics and logs
-- Dashboard and live monitoring interface
-- Dataset and model status page
+The application integrates a Python backend, YOLO-based computer vision, traffic-control logic, and a web-based monitoring interface.
+
+## Key Capabilities
+
+- **Emergency vehicle recognition:** Uses a custom-trained YOLO model to identify supported emergency vehicle categories.
+- **Video-based traffic analysis:** Processes uploaded traffic videos and detects vehicles across video frames.
+- **Vehicle tracking:** Maintains vehicle tracks to support traffic analysis over time.
+- **Four-direction traffic management:** Organizes traffic information by NORTH, SOUTH, EAST, and WEST.
+- **Adaptive signal decisions:** Selects signal phases based on traffic conditions and configured priority rules.
+- **Waiting-time estimation:** Estimates how long vehicles have been waiting under red-signal conditions.
+- **Emergency priority handling:** Integrates emergency vehicle detection with traffic-control decisions.
+- **Interactive dashboard:** Displays traffic information, detection results, and signal states through a React interface.
+- **Traffic reports and analytics:** Supports the project's reporting and statistical analysis features.
+- **Simulation mode:** Enables traffic-control logic to be tested without relying exclusively on real traffic footage.
+
+*Note: Detection accuracy and emergency-response behavior depend on model performance, video quality, lane configuration, and the current system settings.*
+
+## System Architecture
+
+The project is organized into three main components:
+
+| Component | Responsibility |
+|---|---|
+| Computer vision | Detects vehicles and processes detection results from video frames. |
+| Traffic management backend | Handles traffic analysis, priority calculations, signal decisions, and related services. |
+| Web dashboard | Presents traffic conditions, detection information, signal controls, and reports. |
+
+## Technology Stack
+
+**Backend**
+- Python
+- FastAPI
+- OpenCV
+- Ultralytics YOLO
+- SQLite
+
+**Frontend**
+- React
+- Vite
+- JavaScript
+- CSS
+
+**Machine Learning and Evaluation**
+- YOLO-based object detection
+- Custom emergency vehicle model
 - Training and evaluation scripts
+- Pytest for logic-level testing
 
-## Project Structure
+## Repository Structure
 
 ```text
-Traffic_Management_System/
+Traffic_Management/
 ├── backend/
-│   ├── app.py
-│   ├── config.py
 │   ├── database/
 │   ├── detection/
 │   ├── routes/
 │   ├── services/
 │   ├── traffic/
-│   └── websocket/
-├── dataset/
-│   ├── raw/
-│   └── processed/
+│   ├── tests/
+│   ├── config.py
+│   └── system_config.json
 ├── frontend/
+│   └── src/
+│       ├── panels/
+│       ├── App.jsx
+│       └── api.js
 ├── models/
+│   ├── emergency_best.pt
+│   └── emergency_colab_best.pt
 ├── reports/
 ├── scripts/
-│   ├── prepare_dataset.py
-│   ├── train.py
-│   └── evaluate.py
-├── videos/
-│   ├── input/
-│   └── output/
+│   ├── evaluate.py
+│   └── train.py
 ├── requirements.txt
-├── README.md
-└── .gitignore
+├── pytest.ini
+└── README.md
 ```
 
-## Technology Stack
+*The structure above highlights the main project components; additional files and directories may exist in the repository.*
 
-- Python 3.13
-- FastAPI
-- OpenCV
-- Ultralytics YOLOv8
-- SQLite
-- React + Vite
-- NumPy / Pandas
+## Running the Application
 
-## Setup
+### 1. Start the Backend
 
-### 1. Backend
+Open a terminal in the project root and activate your Python environment.
 
 ```powershell
 cd backend
 python -m venv venv
 venv\Scripts\activate
 pip install -r ..\requirements.txt
-python app.py
 ```
 
-The backend runs on:
-- http://localhost:8000
+Start the backend using the entry point configured in your project. For example, if the application exposes `app` from `app.py`:
 
-### 2. Frontend
+```powershell
+uvicorn app:app --reload
+```
+
+Backend address, if configured to use the default port:
+
+`http://localhost:8000`
+
+### 2. Start the Frontend
+
+Open a second terminal:
 
 ```powershell
 cd frontend
@@ -89,125 +121,95 @@ npm install
 npm run dev
 ```
 
-The dashboard runs on:
-- http://localhost:5173
+The Vite development server commonly runs at:
 
-## Dataset Preparation
+`http://localhost:5173`
 
-The project expects the UA-DETRAC data to be available under the workspace root or inside the `dataset/raw/` directory.
+Confirm the actual backend entry point and configured ports in your local project before running these commands.
 
-### Example locations
+## Emergency Vehicle Detection
 
-```text
-DETRAC-Images/
-DETRAC-Train-Annotations-XML/
-DETRAC-Test-Annotations-XML/
-```
+The project includes a custom-trained YOLO model intended to recognize these emergency vehicle classes:
 
-Then run:
+- Ambulance
+- Fire truck
+- Police vehicle
 
-```powershell
-python scripts\prepare_dataset.py
-```
+The model is integrated into the detection pipeline so that its results can contribute to emergency-priority handling.
 
-This creates the processed YOLO-ready dataset in:
+Detection results should be evaluated against representative traffic videos before claiming reliable real-world performance. Small or distant emergency vehicles, occlusion, lighting conditions, and camera angles can affect recognition.
 
-```text
-dataset/processed/images/train
-dataset/processed/images/val
-dataset/processed/images/test
-```
+## Adaptive Traffic Signal Logic
 
-## Model Training
+The traffic-control component uses traffic information and configurable rules to make signal decisions.
 
-```powershell
-python scripts\train.py --epochs 10 --imgsz 640 --batch 8
-```
+The intended processing flow is:
 
-A trained output may be saved as:
+1. Obtain vehicle detections from video processing or simulation.
+2. Associate vehicles with configured intersection directions.
+3. Estimate directional traffic density.
+4. Estimate waiting time where applicable.
+5. Calculate priority using the configured traffic-management rules.
+6. Consider emergency priority and starvation prevention.
+7. Select the next signal phase and determine its green duration within configured limits.
+8. Update the dashboard with the resulting traffic and signal information.
 
-```text
-models\best.pt
-```
-
-If no trained model exists, the app will still operate with the pretrained YOLOv8n model.
-
-## Adaptive Signal Control
-
-The system uses the same logic for both simulation and video-processing modes:
-
-- count vehicles by direction,
-- compute density from count thresholds,
-- estimate waiting time by speed and red signal state,
-- compute priority using density + waiting time + starvation prevention,
-- choose the next green phase,
-- assign dynamic green duration within configured min/max values.
+The exact behavior is controlled by the project's backend configuration and signal-control implementation.
 
 ## Configuration
 
-The main configuration is stored in:
+Traffic-control and detection parameters are managed through the backend configuration files.
 
-```text
-backend/config.py
+Depending on the current implementation, these settings include:
+
+- Model paths and detection confidence thresholds
+- Emergency vehicle class configuration
+- Intersection lane regions
+- Traffic-density thresholds
+- Waiting-time and priority parameters
+- Minimum and maximum green durations
+- Signal transition settings
+
+Review `backend/config.py` and `backend/system_config.json` for the configuration supported by your current version.
+
+## Training and Evaluation
+
+The repository includes scripts for model training and evaluation.
+
+Example commands, subject to the arguments supported by the scripts:
+
+```powershell
+python scripts/train.py
+python scripts/evaluate.py
 ```
 
-Key settings include:
-- detection confidence threshold,
-- IoU threshold,
-- min and max green time,
-- yellow time,
-- density and waiting weights,
-- waiting-speed threshold,
-- ROI boxes for NORTH/SOUTH/EAST/WEST.
-
-## Uploading a Video
-
-Use the frontend upload control or place a video in:
-
-```text
-videos/input/
-```
-
-Allowed video files include:
-- .mp4
-- .avi
-- .mov
-- .mkv
-
-## Database
-
-The project uses SQLite for traffic statistics and system events:
-
-```text
-backend/database/traffic.db
-```
+Check each script's command-line options before specifying training parameters. The trained weights and evaluation results depend on the dataset, configuration, and training run.
 
 ## Testing
 
-The project includes lightweight logic-level checks for:
-- vehicle counting,
-- density calculation,
-- waiting-time estimation,
-- priority scoring,
-- green-duration calculation,
-- signal state transitions.
-
-You can run tests with:
+Run the project's logic-level tests from the repository root:
 
 ```powershell
 pytest
 ```
 
-## Notes
+These tests can help verify traffic-control behavior, including calculations and signal transitions covered by the existing test suite.
 
-- This project is designed to work locally on Windows.
-- The final model training is optional; the app can run with a pretrained YOLO model.
-- Real detection performance depends on the available dataset and computer hardware.
+Passing logic-level tests does not, by itself, establish that emergency vehicles will be detected reliably in real-world videos.
 
-## Future Enhancements
+## Current Scope and Limitations
 
-- real-time camera integration,
-- export reports as PDF/CSV,
-- stronger tracking with ByteTrack tuning,
-- improved ROI calibration UI,
-- better historical analytics graphs.
+- The application supports software-based traffic analysis and simulation.
+- Emergency vehicle recognition depends on the trained model and the quality of the input footage.
+- Direction assignment depends on the configured intersection regions.
+- Real-world traffic conditions may require further model evaluation and parameter tuning.
+- Hardware integration, if used in a separate prototype, is distinct from the software pipeline described here.
+
+## Future Improvements
+
+- Improve emergency vehicle detection across different traffic conditions.
+- Evaluate model performance using a broader collection of real traffic videos.
+- Refine lane-region calibration and vehicle tracking.
+- Expand historical traffic analytics and performance comparisons.
+- Improve signal decisions for complex or simultaneous emergency scenarios.
+- Explore integration with live camera feeds and physical traffic-signal hardware.
