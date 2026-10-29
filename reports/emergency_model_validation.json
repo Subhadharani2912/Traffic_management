@@ -1,0 +1,46 @@
+[
+  {
+    "video": "Emergency_Ambulance.mp4",
+    "is_emergency_video": true,
+    "total_video_frames": 289,
+    "frames_sampled": 97,
+    "emergency_detections_count": 46,
+    "detection_rate_pct": 47.42,
+    "class_breakdown": {
+      "ambulance": 54,
+      "fire_truck": 0,
+      "police": 0
+    },
+    "max_consecutive_confirmed_frames": 8,
+    "five_frame_confirmed": true,
+    "avg_latency_ms": 548.1,
+    "avg_inference_fps": 1.8,
+    "evaluation": {
+      "missed_detections_sampled_frames": 51,
+      "detection_sensitivity": "47.4%",
+      "sustained_confirmation": "PASSED (>= 5 consecutive frames)"
+    }
+  },
+  {
+    "video": "Traffic.mp4",
+    "is_emergency_video": false,
+    "total_video_frames": 335,
+    "frames_sampled": 84,
+    "emergency_detections_count": 5,
+    "detection_rate_pct": 5.95,
+    "class_breakdown": {
+      "ambulance": 5,
+      "fire_truck": 0,
+      "police": 0
+    },
+    "max_consecutive_confirmed_frames": 3,
+    "five_frame_confirmed": false,
+    "avg_latency_ms": 457.4,
+    "avg_inference_fps": 2.2,
+    "evaluation": {
+      "false_positives": 5,
+      "false_positive_rate": "5.95%",
+      "purity": "94.0%"
+    }
+  }
+]

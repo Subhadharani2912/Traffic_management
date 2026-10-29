@@ -197,4 +197,9 @@ def download_report(filename: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"Report not found: {filename}")
     media_type = "application/pdf" if safe_name.endswith(".pdf") else "text/csv"
-    return FileResponse(str(file_path), media_type=media_type, filename=safe_name)
+    return FileResponse(
+        str(file_path),
+        media_type=media_type,
+        filename=safe_name,
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'}
+    )

@@ -12,7 +12,19 @@ class DirectionMetrics(BaseModel):
     max_waiting_time: float = 0.0
     signal_state: str = "RED"  # 'RED', 'YELLOW', 'GREEN'
     priority_score: float = 0.0
+    
     starvation_timer: float = 0.0
+
+
+class EmergencyState(BaseModel):
+    active: bool = False
+    vehicle_id: Optional[int] = None
+    type: Optional[str] = None  # 'ambulance', 'fire_truck', 'police'
+    direction: Optional[str] = None  # 'NORTH', 'SOUTH', 'EAST', 'WEST'
+    confidence: float = 0.0
+    duration: float = 0.0
+    timer_remaining: float = 0.0
+    status: str = "IDLE"  # 'IDLE', 'TRANSITIONING', 'PREEMPTED', 'CLEARED'
 
 
 class TrafficStateResponse(BaseModel):
@@ -34,6 +46,7 @@ class TrafficStateResponse(BaseModel):
     adaptive_mode: bool = True
     directions: Dict[str, DirectionMetrics]
     tracked_vehicles: List[Dict[str, Any]] = []
+    emergency: Optional[EmergencyState] = Field(default_factory=EmergencyState)
     timestamp: str
 
 

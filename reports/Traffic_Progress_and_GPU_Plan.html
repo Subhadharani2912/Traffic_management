@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Traffic Management — Progress and GPU Plan</title>
+  <style>
+    :root {
+      --text: #1a1a1a;
+      --muted: #5c5c5c;
+      --line: #d9d9d9;
+      --bg: #fff;
+      --ok: #1b7a3d;
+      --warn: #9a6b00;
+      --bad: #b42318;
+      --info: #175cd3;
+      --fill: #f6f6f6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: var(--bg);
+      font: 15px/1.5 Segoe UI, system-ui, sans-serif;
+    }
+    .page { max-width: 880px; margin: 0 auto; padding: 32px 28px 64px; }
+    header { border-bottom: 1px solid var(--line); padding-bottom: 16px; margin-bottom: 24px; }
+    h1 { font-size: 24px; font-weight: 650; margin: 0 0 8px; }
+    h2 { font-size: 18px; margin: 28px 0 10px; }
+    h3 { font-size: 15px; margin: 20px 0 8px; }
+    p, li { color: var(--text); }
+    .meta { color: var(--muted); font-size: 13px; }
+    .toolbar {
+      display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 0;
+    }
+    button, .btn {
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 8px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font: inherit;
+      text-decoration: none;
+      color: inherit;
+    }
+    button.primary { background: #111; color: #fff; border-color: #111; }
+    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 18px 0; }
+    .kpi { border: 1px solid var(--line); padding: 12px; }
+    .kpi b { display: block; font-size: 18px; }
+    .kpi span { color: var(--muted); font-size: 12px; }
+    .ok b { color: var(--ok); }
+    .warn b { color: var(--warn); }
+    .bad b { color: var(--bad); }
+    .callout {
+      border: 1px solid var(--line);
+      background: var(--fill);
+      padding: 12px 14px;
+      margin: 16px 0;
+    }
+    .callout strong { display: block; margin-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0 18px; }
+    th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: var(--fill); font-weight: 600; }
+    code, pre {
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 12.5px;
+    }
+    pre {
+      background: var(--fill);
+      border: 1px solid var(--line);
+      padding: 12px;
+      overflow: auto;
+    }
+    .bars { margin: 8px 0 20px; }
+    .bar-row { display: grid; grid-template-columns: 200px 1fr 40px; gap: 8px; align-items: center; margin: 6px 0; font-size: 13px; }
+    .track { height: 10px; background: #eee; }
+    .fill { height: 10px; background: #444; }
+    ol.steps { padding-left: 20px; }
+    footer { margin-top: 36px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+    @media print {
+      .toolbar { display: none; }
+      .page { padding: 0; max-width: none; }
+      a { color: inherit; text-decoration: none; }
+    }
+    @media (max-width: 700px) {
+      .kpis { grid-template-columns: 1fr 1fr; }
+      .bar-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <h1>Traffic management: progress and GPU plan</h1>
+      <p class="meta">AI Adaptive Traffic Management System · 11 October 2026 · Project folder: Traffic_management</p>
+      <div class="toolbar">
+        <button class="primary" type="button" onclick="window.print()">Download / Print as PDF</button>
+      </div>
+    </header>
+
+    <p>Goal: detect an <strong>ambulance</strong>, assign its lane (NORTH / SOUTH / EAST / WEST), then preempt green for that approach after a safe yellow and all-red.</p>
+
+    <div class="kpis">
+      <div class="kpi ok"><b>App ready</b><span>Simulation, video, dashboard</span></div>
+      <div class="kpi ok"><b>Logic done</b><span>Lane preemption coded + tested</span></div>
+      <div class="kpi bad"><b>0%</b><span>Ambulance hits on demo video</span></div>
+      <div class="kpi warn"><b>CPU only</b><span>This PC: Intel UHD, no CUDA</span></div>
+    </div>
+
+    <div class="callout">
+      <strong>Blocker</strong>
+      The product path is complete except the trained ambulance weights. Stock YOLOv8n has no ambulance class. Roboflow Universe has hosted emergency models, but not a downloadable .pt for this local app. <code>models/emergency_best.pt</code> is missing, so <code>detect_emergency()</code> returns nothing and the signal never preempts from video.
+    </div>
+
+    <h2>1. Completion by layer</h2>
+    <p class="meta">Source: Traffic_management codebase, CPU train args, reports/emergency_model_validation.json</p>
+    <div class="bars">
+      <div class="bar-row"><span>Dashboard / API</span><div class="track"><div class="fill" style="width:95%"></div></div><span>95%</span></div>
+      <div class="bar-row"><span>Adaptive signals</span><div class="track"><div class="fill" style="width:100%"></div></div><span>100%</span></div>
+      <div class="bar-row"><span>Vehicle detect (COCO)</span><div class="track"><div class="fill" style="width:85%"></div></div><span>85%</span></div>
+      <div class="bar-row"><span>Emergency pipeline code</span><div class="track"><div class="fill" style="width:100%"></div></div><span>100%</span></div>
+      <div class="bar-row"><span>Indian dataset</span><div class="track"><div class="fill" style="width:90%"></div></div><span>90%</span></div>
+      <div class="bar-row"><span>Ambulance weights</span><div class="track"><div class="fill" style="width:5%"></div></div><span>5%</span></div>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>Workstream</th><th>Status</th><th>What improved</th><th>Still open</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Core traffic app</td><td>Done</td><td>Path auto-heal, engine crash fix, pytest, launchers</td><td>Polish only</td></tr>
+        <tr><td>Adaptive 4-way control</td><td>Done</td><td>Density + wait + starvation; queue-clearing green</td><td>None for demo</td></tr>
+        <tr><td>Emergency preemption</td><td>Code done</td><td>5-frame confirm, YELLOW then ALL-RED then GREEN</td><td>Needs real detections</td></tr>
+        <tr><td>Indian emergency data</td><td>Prepared</td><td>Roboflow zip, remap to ambulance / fire_truck / police</td><td>CPU subset only so far</td></tr>
+        <tr><td>YOLO ambulance model</td><td>Not trained</td><td>train.py --emergency --device ready</td><td>No usable emergency_best.pt</td></tr>
+      </tbody>
+    </table>
+
+    <h2>2. Video check (current model gap)</h2>
+    <table>
+      <thead>
+        <tr><th>Clip</th><th>Expected</th><th>Sampled frames</th><th>Ambulance detections</th><th>Result</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Emergency_Ambulance.mp4</td><td>Should fire ambulance</td><td>97 / 289</td><td>0 (0%)</td><td>Miss</td></tr>
+        <tr><td>Traffic.mp4</td><td>Should stay clean</td><td>84 / 335</td><td>0 false positives</td><td>Clean</td></tr>
+      </tbody>
+    </table>
+    <p class="meta">Inference ~6.6–9.3 FPS on CPU. Empty miss rate is expected without trained emergency weights.</p>
+
+    <h2>3. What is built (no GPU needed)</h2>
+    <p>Video or simulation → YOLOv8 vehicles + optional emergency model → tracker + lane assignment → density / wait / priority → signal controller → React dashboard over WebSocket.</p>
+    <table>
+      <thead>
+        <tr><th>Piece</th><th>Location</th><th>Behavior</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Primary detector</td><td>backend/detection/detector.py</td><td>COCO yolov8n: car, motorcycle, bus, truck</td></tr>
+        <tr><td>Emergency detector slot</td><td>detector.detect_emergency()</td><td>Loads models/emergency_best.pt if present; otherwise empty list</td></tr>
+        <tr><td>Tracker confirm</td><td>backend/detection/tracker.py</td><td>Needs 5 consecutive frames before emergency_active</td></tr>
+        <tr><td>Preemption</td><td>backend/traffic/signal_controller.py</td><td>Hold green if already that lane; else YELLOW → ALL-RED → GREEN 15s</td></tr>
+        <tr><td>Video hook</td><td>backend/services/video_processor.py</td><td>Calls detect_emergency every frame and preempts confirmed lane</td></tr>
+        <tr><td>UI</td><td>frontend/src/panels/*</td><td>Dashboard, live view, signals, dataset/model page, reports</td></tr>
+      </tbody>
+    </table>
+
+    <h3>CPU training attempts (incomplete)</h3>
+    <p>This PC: Intel UHD Graphics, PyTorch cuda: False, no NVIDIA driver.</p>
+    <table>
+      <thead>
+        <tr><th>Run</th><th>Settings</th><th>Outcome</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>emergency_training</td><td>CPU, batch 4, imgsz 416, 15% of data, 30 epochs planned</td><td>Too slow / incomplete</td></tr>
+        <tr><td>emergency_training_fast</td><td>CPU, batch 8, imgsz 320, 8% of data, freeze 10</td><td>CPU workaround, not a real model</td></tr>
+      </tbody>
+    </table>
+    <p><code>models/emergency_best.pt</code> is not present. That is a training gap, not a missing feature in the app.</p>
+    <p><strong>Improvement vs original clone:</strong> runtime paths no longer point at another machine; simulation crash (missing gen) is fixed; Indian labels remap into one ambulance class; preemption is unit-tested for all four approaches.</p>
+
+    <h2>4. GPU server plan</h2>
+    <p>Training is the only step that needs the GPU. Copy weights back to this laptop. The existing detector already loads <code>emergency_best.pt</code>.</p>
+    <ol class="steps">
+      <li>Use NVIDIA + CUDA PyTorch (T4 / RTX 3060+ is enough for YOLOv8n). Confirm <code>torch.cuda.is_available()</code> is True.</li>
+      <li>Copy this project, or at least <code>scripts/train.py</code>, <code>dataset/emergency_compact</code> (or <code>emergency_indian</code>), and <code>requirements.txt</code>.</li>
+      <li>If compact set is missing: <code>python scripts/prepare_indian_emergency.py</code></li>
+      <li>Train (full data, no CPU <code>--fraction</code>):</li>
+    </ol>
+    <pre>python scripts/train.py --emergency --device 0 --batch 16 --epochs 50 --imgsz 640 --patience 15</pre>
+    <p>If VRAM is 16 GB or more, use <code>--batch 32</code>. Output: <code>models/emergency_best.pt</code>.</p>
+    <ol class="steps" start="5">
+      <li>Copy <code>emergency_best.pt</code> to <code>Traffic_management/models/emergency_best.pt</code> on this PC. Config already points there. No detector rewrite.</li>
+      <li>Evaluate, then run <code>videos/input/Emergency_Ambulance.mp4</code>.</li>
+    </ol>
+    <pre>python scripts/evaluate.py --emergency --data dataset/emergency_compact/data.yaml</pre>
+
+    <h3>Success criteria</h3>
+    <table>
+      <thead>
+        <tr><th>Check</th><th>Pass if</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Val mAP@50 on ambulance</td><td>Clearly above random; aim 0.6+ if data is clean</td></tr>
+        <tr><td>Emergency_Ambulance.mp4</td><td>Repeated ambulance boxes, 5-frame confirm</td></tr>
+        <tr><td>Traffic.mp4</td><td>Still near-zero false ambulances</td></tr>
+        <tr><td>Signals</td><td>Only the ambulance approach goes green after YELLOW / ALL-RED</td></tr>
+      </tbody>
+    </table>
+
+    <h3>What not to redo on the GPU</h3>
+    <p>Do not rebuild the dashboard, tracker, or preemption. Do not train on COCO alone. Do not depend on Roboflow hosted inference unless you accept an online API.</p>
+
+    <h2>5. Bottom line</h2>
+    <table>
+      <thead>
+        <tr><th>Question</th><th>Answer</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Is the traffic system implemented?</td><td>Yes — control, video, dashboard.</td></tr>
+        <tr><td>Can it identify an ambulance today?</td><td>No — missing trained weights.</td></tr>
+        <tr><td>Did we improve the project?</td><td>Yes — emergency architecture, Indian data, safe preemption, CPU/GPU train flags.</td></tr>
+        <tr><td>Is a GPU server worth it?</td><td>Yes — that is the remaining critical step.</td></tr>
+        <tr><td>Must we re-code after GPU training?</td><td>No — drop in emergency_best.pt.</td></tr>
+      </tbody>
+    </table>
+
+    <footer>
+      Print this page and choose “Save as PDF” (Chrome / Edge: Ctrl+P → Destination: Save as PDF). Markdown copy: PROGRESS_AND_GPU_PLAN.md in the same folder.
+    </footer>
+  </div>
+</body>
+</html>

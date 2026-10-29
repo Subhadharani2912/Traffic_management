@@ -31,6 +31,34 @@ export default function SignalControl({ dashboard, config, onNotify, onConfigCha
     }
   }
 
+  const [emDirection, setEmDirection] = useState('NORTH')
+  const [emType, setEmType] = useState('ambulance')
+  const [emDuration, setEmDuration] = useState(15)
+
+  const triggerEmergency = async (d = emDirection, t = emType, dur = emDuration) => {
+    setBusy(true)
+    try {
+      await api.emergencyPreemption(d, t, Number(dur))
+      onNotify(`Emergency preemption initiated: ${t.toUpperCase()} on ${d} (${dur}s)`, 'success')
+    } catch (e) {
+      onNotify(`Preemption failed: ${e.message}`, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const clearEmergency = async () => {
+    setBusy(true)
+    try {
+      await api.emergencyClear()
+      onNotify('Emergency preemption cleared', 'success')
+    } catch (e) {
+      onNotify(`Clear failed: ${e.message}`, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const toggleAdaptive = async (next) => {
     try {
       await api.setAdaptive(next)
@@ -103,6 +131,79 @@ export default function SignalControl({ dashboard, config, onNotify, onConfigCha
               <button className={`btn ${dashboard.adaptive_mode === false ? 'active' : ''}`} onClick={() => toggleAdaptive(false)}>Manual override</button>
             </div>
             <div className="hint">In AI mode the controller chooses the direction with the most traffic and waiting time.</div>
+          </div>
+
+          <div className="emergency-control-section" style={{ marginTop: 24, padding: 16, borderRadius: 12, border: '1px solid rgba(220, 38, 38, 0.35)', background: 'rgba(220, 38, 38, 0.05)' }}>
+            <div className="panel-heading" style={{ marginBottom: 12 }}>
+              <div>
+                <h4 style={{ margin: 0, color: '#fca5a5', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>🚨</span> Emergency Preemption Dispatch
+                </h4>
+                <small style={{ color: '#fbbf24', display: 'block', marginTop: 4 }}>
+                  [TEST / SIMULATION MODE] Safe software trigger for emergency preemption testing without physical vehicle detection.
+                </small>
+              </div>
+              <span className={`badge ${dashboard.emergency?.active ? 'danger' : 'neutral'}`}>
+                {dashboard.emergency?.active ? `ACTIVE: ${dashboard.emergency.type?.toUpperCase()}` : 'STANDBY'}
+              </span>
+            </div>
+
+            {dashboard.emergency?.active ? (
+              <div className="emergency-active-card" style={{ padding: 12, borderRadius: 8, background: 'rgba(220, 38, 38, 0.15)', border: '1px solid rgba(220, 38, 38, 0.5)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                  <div>
+                    <strong>Preempting Approach: {dashboard.emergency.direction}</strong>
+                    <div style={{ fontSize: '0.85rem', color: '#fecaca', marginTop: 4 }}>
+                      Vehicle: {dashboard.emergency.type?.toUpperCase()} {dashboard.emergency.vehicle_id ? `(#${dashboard.emergency.vehicle_id})` : ''} · Remaining: <b>{Number(dashboard.emergency.timer_remaining || 0).toFixed(1)}s</b>
+                    </div>
+                  </div>
+                  <button className="btn danger" onClick={clearEmergency} disabled={busy}>
+                    Clear Preemption
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <p style={{ fontSize: '0.84rem', color: 'var(--muted-ink)', marginBottom: 10 }}>
+                  Quick Dispatch (cycles active green safely via YELLOW 3s &rarr; ALL_RED 1s before granting emergency green):
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8, marginBottom: 14 }}>
+                  <button className="btn" style={{ borderColor: 'rgba(239, 68, 68, 0.4)' }} onClick={() => triggerEmergency('NORTH', 'ambulance', emDuration)} disabled={busy}>
+                    🚑 Amb &rarr; NORTH
+                  </button>
+                  <button className="btn" style={{ borderColor: 'rgba(239, 68, 68, 0.4)' }} onClick={() => triggerEmergency('SOUTH', 'ambulance', emDuration)} disabled={busy}>
+                    🚑 Amb &rarr; SOUTH
+                  </button>
+                  <button className="btn" style={{ borderColor: 'rgba(249, 115, 22, 0.4)' }} onClick={() => triggerEmergency('EAST', 'fire_truck', emDuration)} disabled={busy}>
+                    🚒 Fire &rarr; EAST
+                  </button>
+                  <button className="btn" style={{ borderColor: 'rgba(59, 130, 246, 0.4)' }} onClick={() => triggerEmergency('WEST', 'police', emDuration)} disabled={busy}>
+                    🚓 Cop &rarr; WEST
+                  </button>
+                </div>
+
+                <div className="inline-form" style={{ gap: 10 }}>
+                  <label>Approach
+                    <select className="input" value={emDirection} onChange={(e) => setEmDirection(e.target.value)}>
+                      {DIRECTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </label>
+                  <label>Vehicle Type
+                    <select className="input" value={emType} onChange={(e) => setEmType(e.target.value)}>
+                      <option value="ambulance">Ambulance</option>
+                      <option value="fire_truck">Fire Truck</option>
+                      <option value="police">Police</option>
+                    </select>
+                  </label>
+                  <label>Duration (s)
+                    <input type="number" className="input" value={emDuration} min={5} max={60} onChange={(e) => setEmDuration(e.target.value)} />
+                  </label>
+                  <button className="btn danger" style={{ alignSelf: 'flex-end', height: 38 }} onClick={() => triggerEmergency(emDirection, emType, emDuration)} disabled={busy}>
+                    Trigger
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

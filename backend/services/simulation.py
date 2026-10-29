@@ -249,6 +249,7 @@ class IntersectionSimulation:
             "adaptive_mode": self.signal_controller.adaptive_mode,
             "directions": directions_summary,
             "tracked_vehicles": tracked_list,
+            "emergency": ctrl_state.get("emergency", {}),
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
         }
 

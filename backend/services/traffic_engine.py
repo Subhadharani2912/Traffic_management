@@ -14,6 +14,8 @@ from backend.database.database import (
     record_traffic_metric,
     record_phase_switch,
     log_event,
+    log_emergency_event,
+    update_emergency_event,
 )
 from backend.services.simulation import IntersectionSimulation
 from backend.services.video_processor import VideoProcessorService
@@ -64,7 +66,10 @@ class TrafficEngine:
     def get_latest_state(self) -> Dict[str, Any]:
         with self._lock:
             if self._last_state:
-                return dict(self._last_state)
+                st = dict(self._last_state)
+                if "emergency" not in st or not st["emergency"]:
+                    st["emergency"] = self.get_emergency_state()
+                return st
         return {
             "mode": self.mode,
             "active_direction": "NORTH",
@@ -80,6 +85,7 @@ class TrafficEngine:
                 for d in ["NORTH", "SOUTH", "EAST", "WEST"]
             },
             "tracked_vehicles": [],
+            "emergency": self.get_emergency_state(),
             "error": self._error,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -88,7 +94,12 @@ class TrafficEngine:
         with self._lock:
             if self._last_frame is None:
                 return self._frame_seq, None
-            ret, jpeg = cv2.imencode(".jpg", self._last_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+            frame_to_send = self._last_frame
+            fh, fw = frame_to_send.shape[:2]
+            if fw > 960:
+                scale = 960.0 / fw
+                frame_to_send = cv2.resize(frame_to_send, (960, int(fh * scale)), interpolation=cv2.INTER_AREA)
+            ret, jpeg = cv2.imencode(".jpg", frame_to_send, [int(cv2.IMWRITE_JPEG_QUALITY), 72])
             if not ret:
                 return self._frame_seq, None
             return self._frame_seq, jpeg.tobytes()
@@ -190,6 +201,102 @@ class TrafficEngine:
             log_event(f"Manual signal switch requested to {direction} ({duration}s)", "INFO", "SIGNAL")
             return {"status": "success", "direction": direction, "duration": duration}
         return {"status": "error", "detail": "No active traffic controller"}
+
+    def trigger_emergency_preemption(
+        self,
+        direction: str,
+        duration: float = 15.0,
+        emergency_type: str = "ambulance",
+        vehicle_id: Optional[int] = None,
+        confidence: float = 0.95
+    ) -> Dict[str, Any]:
+        """
+        Activates emergency vehicle preemption mode safely across simulation or video engine.
+        Guarantees safe transition: Current GREEN -> YELLOW -> ALL_RED -> Emergency GREEN.
+        """
+        direction = direction.upper()
+        if direction not in ["NORTH", "SOUTH", "EAST", "WEST"]:
+            return {"status": "error", "detail": "Invalid direction. Must be NORTH, SOUTH, EAST, or WEST"}
+
+        valid_types = {"ambulance", "fire_truck", "police"}
+        if emergency_type.lower() not in valid_types:
+            emergency_type = "ambulance"
+
+        controller = self._active_controller()
+        if not controller:
+            return {"status": "error", "detail": "No active traffic controller running. Please start the engine first."}
+
+        controller.preempt_emergency(
+            direction=direction,
+            duration=duration,
+            emergency_type=emergency_type,
+            vehicle_id=vehicle_id,
+            confidence=confidence
+        )
+
+        event_id = log_emergency_event(self.session_id, {
+            "vehicle_id": vehicle_id,
+            "emergency_type": emergency_type,
+            "direction": direction,
+            "confidence": confidence,
+        })
+        self._active_emergency_event_id = event_id
+
+        log_event(
+            f"EMERGENCY PREEMPTION ACTIVATED: {emergency_type.upper()} approaching from {direction} ({duration:.1f}s assigned)",
+            "WARNING",
+            "EMERGENCY",
+            details=f"Event ID: {event_id}, Conf: {confidence:.2f}"
+        )
+
+        # Broadcast update immediately
+        state = self.get_latest_state()
+        state["emergency"] = controller.get_emergency_state()
+        asyncio.create_task(manager.broadcast({"type": "state", "data": state}))
+
+        return {
+            "status": "success",
+            "event_id": event_id,
+            "direction": direction,
+            "emergency_type": emergency_type,
+            "duration": duration,
+            "controller_state": controller.get_emergency_state()
+        }
+
+    def clear_emergency_preemption(self) -> Dict[str, Any]:
+        """Clears active emergency preemption and allows normal adaptive cycles to resume."""
+        controller = self._active_controller()
+        if not controller:
+            return {"status": "error", "detail": "No active controller"}
+
+        if hasattr(self, "_active_emergency_event_id") and self._active_emergency_event_id:
+            update_emergency_event(self._active_emergency_event_id, status="CLEARED")
+            self._active_emergency_event_id = None
+
+        controller.clear_emergency()
+        log_event("Emergency preemption cleared - resuming normal adaptive cycle", "INFO", "EMERGENCY")
+
+        # Broadcast updated state immediately
+        state = self.get_latest_state()
+        state["emergency"] = controller.get_emergency_state()
+        asyncio.create_task(manager.broadcast({"type": "state", "data": state}))
+
+        return {"status": "success", "message": "Emergency preemption cleared successfully"}
+
+    def get_emergency_state(self) -> Dict[str, Any]:
+        controller = self._active_controller()
+        if controller and hasattr(controller, "get_emergency_state"):
+            return controller.get_emergency_state()
+        return {
+            "active": False,
+            "type": None,
+            "direction": None,
+            "vehicle_id": None,
+            "confidence": 0.0,
+            "duration": 0.0,
+            "timer_remaining": 0.0,
+            "status": "IDLE"
+        }
 
     def set_adaptive(self, adaptive: bool):
         self.config.adaptive_mode = bool(adaptive)
@@ -378,7 +485,7 @@ class TrafficEngine:
             self._fallback_to_simulation("No video available. Switch back to simulation or upload a video.")
             self.simulation = IntersectionSimulation(self.config)
             self.simulation.signal_controller.set_callback(self._on_phase_switch)
-            await self._simulation_loop()
+            await self._simulation_loop(gen)
             return
 
         self.video_processor = VideoProcessorService(self.config)

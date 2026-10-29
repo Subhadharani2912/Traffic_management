@@ -10,3 +10,21 @@ DETRAC-Train-Annotations-XML/
 videos/
 
 *.db
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# Additional Python environments
+venv/
+
+# Model training artifacts
+models/runs/
+
+# SQLite database variants
+*.sqlite
+*.sqlite3

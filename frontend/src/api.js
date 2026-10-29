@@ -60,6 +60,11 @@ export const api = {
   generateReport: (format = 'pdf', period = 'all') =>
     postJSON('/api/reports/generate', { format, filter_period: period }, 60000),
   downloadReport: (name) => `${API}/api/reports/download/${encodeURIComponent(name)}`,
+  // Emergency Vehicle Preemption (Phase 2)
+  emergencyPreemption: (direction, emergency_type = 'ambulance', duration = 15) =>
+    postJSON('/api/traffic/emergency-preemption', { direction, emergency_type, duration }),
+  emergencyClear: () => postJSON('/api/traffic/emergency-clear', {}),
+  emergencyEvents: (limit = 20) => getJSON(`/api/traffic/emergency-events?limit=${limit}`),
 }
 
 export const DIRECTIONS = ['NORTH', 'SOUTH', 'EAST', 'WEST']
@@ -100,4 +105,14 @@ export const defaultDashboard = {
     WEST: { direction: 'WEST', count: 0, waiting_count: 0, density_level: 'LOW', density_percent: 0, priority_score: 0, signal_state: 'RED', avg_waiting_time: 0, max_waiting_time: 0, starvation_timer: 0 },
   },
   tracked_vehicles: [],
+  emergency: {
+    active: false,
+    type: null,
+    direction: null,
+    vehicle_id: null,
+    confidence: 0,
+    duration: 0,
+    timer_remaining: 0,
+    status: 'IDLE',
+  },
 }

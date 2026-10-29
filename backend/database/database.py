@@ -96,6 +96,25 @@ def init_db():
     )
     """)
 
+    # Emergency Events Log table (Phase 2)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS emergency_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        vehicle_id INTEGER,
+        emergency_type TEXT NOT NULL,       -- 'ambulance', 'fire_truck', 'police'
+        direction TEXT NOT NULL,            -- 'NORTH', 'SOUTH', 'EAST', 'WEST'
+        confidence REAL DEFAULT 1.0,
+        detection_time TIMESTAMP,
+        preemption_start_time TIMESTAMP,
+        preemption_end_time TIMESTAMP,
+        response_time REAL DEFAULT 0.0,     -- seconds from trigger to green
+        status TEXT DEFAULT 'ACTIVE',       -- 'ACTIVE', 'CLEARED', 'CANCELLED'
+        FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
+    )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -229,3 +248,75 @@ def record_phase_switch(session_id: int, phase_data: Dict[str, Any]):
         conn.close()
     except Exception as e:
         print(f"[DB Record Phase Error] {e}")
+
+
+def log_emergency_event(session_id: Optional[int], data: Dict[str, Any]) -> int:
+    """Logs the initiation of an emergency preemption event in SQLite."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            INSERT INTO emergency_events (
+                session_id, timestamp, vehicle_id, emergency_type, direction,
+                confidence, detection_time, preemption_start_time, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            session_id,
+            now_str,
+            data.get("vehicle_id"),
+            data.get("emergency_type", "ambulance"),
+            data.get("direction", "NORTH"),
+            data.get("confidence", 1.0),
+            data.get("detection_time", now_str),
+            now_str,
+            "ACTIVE"
+        ))
+        event_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return event_id
+    except Exception as e:
+        print(f"[DB Emergency Log Error] {e}")
+        return -1
+
+
+def update_emergency_event(event_id: int, status: str = "CLEARED", response_time: Optional[float] = None):
+    """Updates an existing emergency event status and timestamps."""
+    if event_id <= 0:
+        return
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            UPDATE emergency_events
+            SET status = ?, preemption_end_time = ?, response_time = COALESCE(?, response_time)
+            WHERE id = ?
+        """, (status, now_str, response_time, event_id))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[DB Emergency Update Error] {e}")
+
+
+def get_recent_emergency_events(limit: int = 20) -> List[Dict[str, Any]]:
+    """Retrieves recent emergency preemption records from SQLite."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, session_id, timestamp, vehicle_id, emergency_type, direction,
+                   confidence, detection_time, preemption_start_time, preemption_end_time,
+                   response_time, status
+            FROM emergency_events
+            ORDER BY id DESC
+            LIMIT ?
+        """, (limit,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"[DB Get Emergency Events Error] {e}")
+        return []
+

@@ -48,12 +48,119 @@ class SignalController:
         self.cycles_completed: int = 0
         self.phase_switch_callback = None
 
+        # Dedicated Safe Emergency Preemption State (Phase 2)
+        self.emergency_active: bool = False
+        self.emergency_direction: Optional[str] = None
+        self.emergency_type: Optional[str] = None  # 'ambulance', 'fire_truck', 'police'
+        self.emergency_vehicle_id: Optional[int] = None
+        self.emergency_confidence: float = 0.0
+        self.emergency_preemption_duration: float = 15.0
+        self.emergency_timer_remaining: float = 0.0
+        self.emergency_status: str = "IDLE"  # 'IDLE', 'TRANSITIONING', 'PREEMPTED', 'CLEARED'
+
     def set_callback(self, cb):
         self.phase_switch_callback = cb
 
     def get_signal_states(self) -> Dict[str, str]:
         """Ensures safety guarantee: only 1 direction can ever be GREEN or YELLOW."""
         return dict(self.signal_states)
+
+    def get_emergency_state(self) -> Dict[str, Any]:
+        """Returns current system-level emergency preemption telemetry state."""
+        return {
+            "active": self.emergency_active,
+            "type": self.emergency_type,
+            "direction": self.emergency_direction,
+            "vehicle_id": self.emergency_vehicle_id,
+            "confidence": round(self.emergency_confidence, 2),
+            "duration": self.emergency_preemption_duration,
+            "timer_remaining": max(0.0, round(self.emergency_timer_remaining, 1)),
+            "status": self.emergency_status
+        }
+
+    def get_state(self) -> Dict[str, Any]:
+        """Returns the current signal controller state snapshot."""
+        return {
+            "current_direction": self.current_direction,
+            "phase_state": self.phase_state.value,
+            "timer_remaining": max(0.0, round(self.timer_remaining, 1)),
+            "current_green_duration": self.current_green_duration,
+            "next_direction": self.next_direction,
+            "next_green_duration": self.next_green_duration,
+            "next_priority_score": self.next_priority_score,
+            "signal_states": dict(self.signal_states),
+            "cycles_completed": self.cycles_completed,
+            "emergency": self.get_emergency_state()
+        }
+
+    def preempt_emergency(
+        self,
+        direction: str,
+        duration: float = 15.0,
+        emergency_type: str = "ambulance",
+        vehicle_id: Optional[int] = None,
+        confidence: float = 1.0
+    ) -> bool:
+        """
+        Triggers safe emergency vehicle preemption without ever causing an unsafe
+        RED -> GREEN direct jump.
+        Safe transition order:
+          Current GREEN -> YELLOW (clearance) -> ALL_RED (safety buffer) -> Emergency Direction GREEN
+        If the emergency direction already has GREEN, its green timer is safely held.
+        """
+        if isinstance(duration, str):
+            # Caller passed emergency_type as 2nd positional argument
+            emergency_type, duration = duration, 15.0 if not isinstance(emergency_type, (int, float)) else emergency_type
+
+        if direction not in ["NORTH", "SOUTH", "EAST", "WEST"]:
+            return False
+
+        # If already preempted for this exact direction, maintain priority without restarting cycle
+        if self.emergency_active and self.emergency_direction == direction:
+            self.emergency_timer_remaining = max(self.emergency_timer_remaining, duration)
+            self.emergency_preemption_duration = max(self.emergency_preemption_duration, duration)
+            return True
+
+        self.emergency_active = True
+        self.emergency_direction = direction
+        self.emergency_type = emergency_type
+        self.emergency_vehicle_id = vehicle_id
+        self.emergency_confidence = confidence
+        self.emergency_preemption_duration = duration
+        self.emergency_timer_remaining = duration
+
+        # Case 1: Emergency approach is ALREADY GREEN -> hold green immediately
+        if self.current_direction == direction and self.phase_state == SignalPhaseState.GREEN:
+            self.current_green_duration = max(self.current_green_duration, duration)
+            self.timer_remaining = max(self.timer_remaining, duration)
+            self.green_elapsed = 0.0
+            self.emergency_status = "PREEMPTED"
+            return True
+
+        # Case 2: Another lane is active or signal is in transition -> Stage emergency next
+        self.emergency_status = "TRANSITIONING"
+        self.next_direction = direction
+        self.next_green_duration = duration
+
+        # If current phase is GREEN on another approach, safely trigger YELLOW clearance first
+        if self.phase_state == SignalPhaseState.GREEN:
+            self.phase_state = SignalPhaseState.YELLOW
+            self.timer_remaining = self.yellow_duration
+            self.signal_states[self.current_direction] = "YELLOW"
+            if self.phase_switch_callback:
+                self.phase_switch_callback(
+                    self.current_direction, "GREEN", "YELLOW", self.yellow_duration,
+                    0, 999.0
+                )
+
+        return True
+
+    def clear_emergency(self):
+        """Clears active emergency preemption and safely allows normal adaptive control to resume."""
+        self.emergency_active = False
+        self.emergency_status = "CLEARED"
+        self.emergency_direction = None
+        self.emergency_timer_remaining = 0.0
 
     def manual_switch(self, target_direction: str, duration: float = 15.0):
         """Allows testing manual signal change while preserving safety state transitions."""
@@ -92,6 +199,17 @@ class SignalController:
         satisfied, and another lane is strictly more urgent (or is waiting
         while the active lane is empty).
         """
+        # Phase 2: Emergency preemption lock
+        if self.emergency_active:
+            if self.current_direction == self.emergency_direction:
+                if self.emergency_timer_remaining > 0:
+                    return "extend"
+                else:
+                    self.clear_emergency()
+                    return "yield"
+            else:
+                return "yield"
+
         cur_score = priorities.get(self.current_direction, 0.0)
         others = {d: v for d, v in priorities.items() if d != self.current_direction}
         best_other = max(others.values()) if others else 0.0
@@ -139,48 +257,86 @@ class SignalController:
         frame from live density + waiting time instead of a fixed countdown.
         The active direction keeps green while it still needs it; it yields
         only when its need is satisfied AND another direction is more urgent.
-        Returns a dict summarizing the current signal controller state.
+        During active emergency preemption, normal adaptive selection is suspended,
+        conflicting lanes safely clear through YELLOW and ALL_RED, and the
+        emergency lane receives priority GREEN.
         """
         self.timer_remaining = max(0.0, self.timer_remaining - dt)
 
         # Continuously update priorities for dashboard preview
         priorities = self.priority_calc.calculate_priorities(counts, waiting_stats, self.current_direction)
-        if self.adaptive_mode:
+        if self.adaptive_mode and not self.emergency_active:
             next_dir, next_dur = self.priority_calc.select_next_phase(priorities, self.current_direction, counts, waiting_stats)
             self.next_direction = next_dir
             self.next_green_duration = next_dur
             self.next_priority_score = priorities.get(next_dir, 0.0)
+        elif self.emergency_active:
+            self.next_direction = self.emergency_direction
+            self.next_green_duration = self.emergency_preemption_duration
+            self.next_priority_score = 999.0
 
         # --- State Machine Transitions ---
         if self.phase_state == SignalPhaseState.GREEN:
             self.green_elapsed += dt
             self.green_total += dt
 
-            # Dynamic required green from live density + waiting time
-            raw_need = self._dynamic_green_seconds(
-                counts.get(self.current_direction, 0),
-                waiting_stats.get(self.current_direction, {}).get("avg_wait", 0.0)
-            )
-            self.current_green_duration = raw_need
-            self.timer_remaining = max(0.0, raw_need - self.green_elapsed)
+            # If emergency is active on this lane, count down emergency duration
+            if self.emergency_active and self.current_direction == self.emergency_direction:
+                self.emergency_status = "PREEMPTED"
+                self.emergency_timer_remaining = max(0.0, self.emergency_timer_remaining - dt)
+                self.timer_remaining = self.emergency_timer_remaining
+                self.current_green_duration = self.emergency_preemption_duration
 
-            state = self._decide_yield_or_extend(counts, waiting_stats, priorities, raw_need)
-            if state == "yield":
-                # GREEN -> YELLOW
+                if self.emergency_timer_remaining <= 0:
+                    # Emergency pass finished, clear emergency preemption and yield
+                    self.clear_emergency()
+                    self.phase_state = SignalPhaseState.YELLOW
+                    self.timer_remaining = self.yellow_duration
+                    self.signal_states[self.current_direction] = "YELLOW"
+                    if self.phase_switch_callback:
+                        self.phase_switch_callback(
+                            self.current_direction, "GREEN", "YELLOW", self.yellow_duration,
+                            counts.get(self.current_direction, 0),
+                            priorities.get(self.current_direction, 0.0)
+                        )
+            elif self.emergency_active and self.current_direction != self.emergency_direction:
+                # Conflicting lane is currently green; safely yield immediately to yellow
+                self.emergency_status = "TRANSITIONING"
                 self.phase_state = SignalPhaseState.YELLOW
                 self.timer_remaining = self.yellow_duration
                 self.signal_states[self.current_direction] = "YELLOW"
-
                 if self.phase_switch_callback:
                     self.phase_switch_callback(
                         self.current_direction, "GREEN", "YELLOW", self.yellow_duration,
                         counts.get(self.current_direction, 0),
-                        priorities.get(self.current_direction, 0.0)
+                        999.0
                     )
-            elif self.green_elapsed >= raw_need:
-                # Served the dynamic batch; extend with a fresh dynamic batch
-                self.green_elapsed = 0.0
-                self.timer_remaining = raw_need
+            else:
+                # Normal adaptive green calculation
+                raw_need = self._dynamic_green_seconds(
+                    counts.get(self.current_direction, 0),
+                    waiting_stats.get(self.current_direction, {}).get("avg_wait", 0.0)
+                )
+                self.current_green_duration = raw_need
+                self.timer_remaining = max(0.0, raw_need - self.green_elapsed)
+
+                state = self._decide_yield_or_extend(counts, waiting_stats, priorities, raw_need)
+                if state == "yield":
+                    # GREEN -> YELLOW
+                    self.phase_state = SignalPhaseState.YELLOW
+                    self.timer_remaining = self.yellow_duration
+                    self.signal_states[self.current_direction] = "YELLOW"
+
+                    if self.phase_switch_callback:
+                        self.phase_switch_callback(
+                            self.current_direction, "GREEN", "YELLOW", self.yellow_duration,
+                            counts.get(self.current_direction, 0),
+                            priorities.get(self.current_direction, 0.0)
+                        )
+                elif self.green_elapsed >= raw_need:
+                    # Served the dynamic batch; extend with a fresh dynamic batch
+                    self.green_elapsed = 0.0
+                    self.timer_remaining = raw_need
 
         elif self.phase_state == SignalPhaseState.YELLOW:
             if self.timer_remaining <= 0:
@@ -203,8 +359,14 @@ class SignalController:
                 self.phase_state = SignalPhaseState.GREEN
                 self.green_elapsed = 0.0
                 self.green_total = 0.0
-                self.timer_remaining = 0.0
-                self.current_green_duration = 0.0
+
+                if self.emergency_active and self.current_direction == self.emergency_direction:
+                    self.emergency_status = "PREEMPTED"
+                    self.current_green_duration = self.emergency_preemption_duration
+                    self.timer_remaining = self.emergency_timer_remaining
+                else:
+                    self.timer_remaining = 0.0
+                    self.current_green_duration = 0.0
 
                 # Safety: clear all other lights to RED, set only active to GREEN
                 for d in ["NORTH", "SOUTH", "EAST", "WEST"]:
@@ -229,5 +391,6 @@ class SignalController:
             "next_priority_score": self.next_priority_score,
             "signal_states": dict(self.signal_states),
             "priorities": priorities,
-            "cycles_completed": self.cycles_completed
+            "cycles_completed": self.cycles_completed,
+            "emergency": self.get_emergency_state()
         }

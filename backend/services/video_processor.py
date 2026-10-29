@@ -29,9 +29,13 @@ class VideoProcessorService:
         self.detector = detector or VehicleDetector(
             model_path=config.model_path,
             custom_path=config.custom_model_path,
-            conf_thresh=config.confidence_threshold
+            conf_thresh=config.confidence_threshold,
+            emergency_model_path=config.emergency_model_path,
+            emergency_conf_thresh=config.emergency_confidence_threshold,
         )
-        self.tracker = VehicleTrackerManager()
+        self.tracker = VehicleTrackerManager(
+            emergency_confirmation_frames=config.emergency_confirmation_frames
+        )
         self.lane_manager = LaneManager(config.rois, config.intersection_box)
         self.counter = VehicleCounter()
         self.density_calc = DensityCalculator(
@@ -162,6 +166,8 @@ class VideoProcessorService:
                 if not ret:
                     break
             self._frame_index += 1
+            # Fluid video pacing: skip 1 intermediate frame on CPU to match real-time playback
+            self.cap.grab()
 
             h, w = frame.shape[:2]
             current_time = time.time()
@@ -169,12 +175,31 @@ class VideoProcessorService:
             # 1. Build detections: virtual demo boxes (signal-gated) or YOLO track
             signal_states = self.signal_controller.get_signal_states()
             virt_boxes = self._virtual_boxes_for_frame(signal_states)
+            emergency_dets = self.detector.detect_emergency(frame)
+
             if virt_boxes is not None:
                 tracked_vehicles = self.tracker.update_with_yolo_tracks(
-                    None, self.lane_manager, w, h, current_time, signal_states, boxes=virt_boxes
+                    None, self.lane_manager, w, h, current_time, signal_states, boxes=virt_boxes, emergency_detections=emergency_dets
                 )
             else:
-                tracked_vehicles = self._track_real_frame(frame, w, h, current_time, signal_states)
+                tracked_vehicles = self._track_real_frame(frame, w, h, current_time, signal_states, emergency_dets=emergency_dets)
+
+            # Check for confirmed active emergency vehicle approaching
+            confirmed_em = self.tracker.get_active_emergency()
+            if confirmed_em and not getattr(confirmed_em, "preemption_triggered", False):
+                target_dir = confirmed_em.emergency_direction or confirmed_em.direction
+                if not target_dir or target_dir == "UNKNOWN":
+                    target_dir = self.lane_manager.classify_direction(
+                        confirmed_em.center_x, confirmed_em.center_y, w, h, fallback_nearest=True
+                    ) or "NORTH"
+                confirmed_em.preemption_triggered = True
+                self.signal_controller.preempt_emergency(
+                    target_dir,
+                    self.config.emergency_preemption_duration,
+                    confirmed_em.emergency_type or "ambulance",
+                    confirmed_em.id,
+                    confirmed_em.emergency_confidence
+                )
 
             # 3. Vehicle counting & density
             counts = self.counter.update_from_tracked_vehicles(tracked_vehicles)
@@ -188,11 +213,8 @@ class VideoProcessorService:
             # 5. Signal controller step
             ctrl_state = self.signal_controller.step(dt, counts, waiting_stats)
 
-            # 6. Pixel-gate approaches by signal (vehicles visually stop on RED/YELLOW, move on GREEN)
-            gated_frame = self._apply_signal_gate(frame, ctrl_state["signal_states"], dt)
-
-            # 7. Render overlay
-            annotated_frame = self._draw_overlays(gated_frame, tracked_vehicles, ctrl_state, counts, densities, waiting_stats, w, h)
+            # 6. Render overlay directly on clean live frame (no artificial pixel freeze or ghosting)
+            annotated_frame = self._draw_overlays(frame, tracked_vehicles, ctrl_state, counts, densities, waiting_stats, w, h)
 
             # Calculate FPS
             elapsed = time.time() - t0
@@ -261,6 +283,7 @@ class VideoProcessorService:
                 "adaptive_mode": self.signal_controller.adaptive_mode,
                 "directions": directions_summary,
                 "tracked_vehicles": tracked_vehicles,
+                "emergency": ctrl_state.get("emergency", {}),
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
             }
 
@@ -273,7 +296,7 @@ class VideoProcessorService:
             sleep_time = max(0.001, delay - proc_time)
             time.sleep(sleep_time)
 
-    def _track_real_frame(self, frame, w, h, current_time, signal_states):
+    def _track_real_frame(self, frame, w, h, current_time, signal_states, emergency_dets=None):
         """YOLO ByteTrack with a resilient fallback to plain detection + centroid association."""
         results = None
         try:
@@ -283,14 +306,14 @@ class VideoProcessorService:
                 iou=self.config.iou_threshold,
                 persist=True,
                 classes=list(self.detector.class_map.keys()),
-                imgsz=1280,
+                imgsz=480,
                 verbose=False
             )
         except Exception as e:
             log_event(f"model.track failed, using detector.detect: {e}", "WARNING", "VIDEO")
         if results is not None and results and results[0].boxes is not None and len(results[0].boxes) > 0:
             return self.tracker.update_with_yolo_tracks(
-                results, self.lane_manager, w, h, current_time, signal_states
+                results, self.lane_manager, w, h, current_time, signal_states, emergency_detections=emergency_dets
             )
         try:
             det_blob = self.detector.detect(frame, conf=self.config.confidence_threshold)
@@ -299,11 +322,11 @@ class VideoProcessorService:
                     None, self.lane_manager, w, h, current_time, signal_states, boxes=[
                         {"bbox": d["bbox"], "conf": d["confidence"], "cls": d["class_name"], "id": None}
                         for d in det_blob
-                    ]
+                    ], emergency_detections=emergency_dets
                 )
         except Exception as e2:
             log_event(f"detector.detect fallback failed: {e2}", "WARNING", "VIDEO")
-        return self.tracker.update_with_yolo_tracks(None, self.lane_manager, w, h, current_time, signal_states)
+        return self.tracker.update_with_yolo_tracks(None, self.lane_manager, w, h, current_time, signal_states, emergency_detections=emergency_dets)
 
     def _virtual_boxes_for_frame(self, signal_states: Dict[str, str]) -> Optional[List[Dict[str, Any]]]:
         """
@@ -472,44 +495,59 @@ class VideoProcessorService:
             if len(bbox) == 4:
                 x1, y1, x2, y2 = bbox
                 vid = veh.get("id")
-                cls_name = veh.get("class")
+                cls_name = veh.get("class", "vehicle")
                 conf = veh.get("confidence", 0.0)
                 v_wait = veh.get("waiting_time", 0.0)
                 status = veh.get("status", "")
                 stopped = veh.get("stopped", False)
                 ran_red = veh.get("ran_red", False)
+                is_em = bool(
+                    veh.get("emergency_active") or
+                    (veh.get("is_emergency") and veh.get("emergency_detection_frames", 0) >= 3 and veh.get("emergency_confidence", 0) >= 0.50)
+                )
 
-                if stopped:
-                    blink = 1 if int(time.time() * 2) % 2 else 0
+                # Resolve direction - never show UNKNOWN or ?
+                direction = veh.get("direction")
+                if not direction or direction in ("UNKNOWN", "?"):
+                    direction = veh.get("emergency_direction")
+                if not direction or direction in ("UNKNOWN", "?"):
+                    direction = self.lane_manager.classify_direction((x1 + x2) // 2, (y1 + y2) // 2, w, h, fallback_nearest=True) or "WEST"
+
+                if is_em:
+                    # Clear, high-visibility AMBULANCE highlighting without dark opaque cover
+                    cv2.rectangle(out, (x1, y1), (x2, y2), (255, 255, 255), 4)
+                    cv2.rectangle(out, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                    em_title = str(veh.get("emergency_type") or cls_name or "AMBULANCE").upper()
+                    em_disp_conf = veh.get("emergency_confidence") or conf
+                    label = f"AMBULANCE #{vid} [{direction}] ({em_disp_conf:.2f})"
+                    tw = len(label) * 9 + 14
+                    cv2.rectangle(out, (x1, max(0, y1 - 24)), (x1 + tw, max(24, y1)), (0, 0, 220), -1)
+                    cv2.rectangle(out, (x1, max(0, y1 - 24)), (x1 + tw, max(24, y1)), (255, 255, 255), 1)
+                    cv2.putText(out, label, (x1 + 6, max(18, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2)
+                elif stopped:
+                    # Clean stopped box without opaque filled cover or center lines
                     box_color = (0, 0, 255)
-                    overlay = out.copy()
-                    cv2.rectangle(overlay, (x1, y1), (x2, y2), box_color, -1)
-                    cv2.addWeighted(overlay, 0.45, out, 0.55, 0, out)
-                    cv2.rectangle(out, (x1, y1), (x2, y2), box_color, 3 - blink)
-                    direction = veh.get("direction", "?")
-                    cx_c = (ibox[0] + ibox[2]) // 2
-                    cy_c = (ibox[1] + ibox[3]) // 2
-                    cv2.line(out, ((x1 + x2) // 2, (y1 + y2) // 2), (cx_c, cy_c), (0, 0, 255), 1)
-                    label = f"#STOP {vid} {v_wait:.1f}s [{direction} RED]"
-                    cv2.rectangle(out, (x1, max(0, y1 - 20)), (x1 + len(label) * 8 + 10, max(20, y1)), (0, 0, 255), -1)
-                    cv2.putText(out, label, (x1 + 3, max(15, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
+                    cv2.rectangle(out, (x1, y1), (x2, y2), box_color, 2)
+                    label = f"#STOP {vid} {cls_name} {v_wait:.1f}s [{direction}]"
+                    tw = len(label) * 8 + 10
+                    cv2.rectangle(out, (x1, max(0, y1 - 20)), (x1 + tw, max(20, y1)), (0, 0, 200), -1)
+                    cv2.putText(out, label, (x1 + 4, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
                 elif ran_red:
                     box_color = (255, 0, 255)
                     cv2.rectangle(out, (x1, y1), (x2, y2), box_color, 2)
                     label = f"#RAN RED {vid} {cls_name}"
-                    cv2.rectangle(out, (x1, max(0, y1 - 20)), (x1 + len(label) * 8 + 10, max(20, y1)), box_color, -1)
-                    cv2.putText(out, label, (x1 + 3, max(15, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
+                    tw = len(label) * 8 + 10
+                    cv2.rectangle(out, (x1, max(0, y1 - 20)), (x1 + tw, max(20, y1)), box_color, -1)
+                    cv2.putText(out, label, (x1 + 4, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
                 else:
                     box_color = (0, 255, 0) if status == "Crossing" else ((0, 165, 255) if status == "Waiting" else (255, 200, 0))
                     cv2.rectangle(out, (x1, y1), (x2, y2), box_color, 2)
-
-                    direction = veh.get("direction", "?")
                     label = f"#{vid} {cls_name} {conf:.2f} [{direction}]"
                     if v_wait > 0.5:
                         label += f" ({v_wait:.1f}s)"
-
-                    cv2.rectangle(out, (x1, max(0, y1 - 20)), (x1 + len(label) * 8 + 10, max(20, y1)), box_color, -1)
-                    cv2.putText(out, label, (x1 + 3, max(15, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1)
+                    tw = len(label) * 8 + 10
+                    cv2.rectangle(out, (x1, max(0, y1 - 20)), (x1 + tw, max(20, y1)), box_color, -1)
+                    cv2.putText(out, label, (x1 + 4, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1)
 
         # 4. Draw Header Status HUD
         curr_d = ctrl["current_direction"]

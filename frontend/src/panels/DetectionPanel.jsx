@@ -128,6 +128,16 @@ export default function DetectionPanel({ dashboard, config, status, onNotify, on
             </ul>
           </div>
           <div className="info-box">
+            <h4>Emergency Detection (Phase 2)</h4>
+            <ul className="status-list">
+              <li>Architecture: <span>Decoupled / Multi-model</span></li>
+              <li>Weights slot: <span>{status.model?.emergency_model?.weights_path || 'models/emergency_best.pt'}</span></li>
+              <li>Status: <span>{status.model?.emergency_model?.status || 'Pluggable architecture ready'}</span></li>
+              <li>Target classes: <span>Ambulance, Fire, Police</span></li>
+              <li>Temporal confirmation: <span>5 frames (anti-flicker)</span></li>
+            </ul>
+          </div>
+          <div className="info-box">
             <h4>Active count by direction</h4>
             {DIRECTIONS.map((d) => (
               <div className="phase-row" key={d}><span>{d}</span><strong>{perDirection[d]}</strong></div>

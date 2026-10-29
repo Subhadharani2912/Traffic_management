@@ -111,6 +111,42 @@ function App() {
           </div>
         </header>
 
+        {dashboard.emergency?.active && (
+          <div className="emergency-alert-banner" role="alert">
+            <div className="emergency-alert-pulse">
+              <span className="emergency-siren-icon">🚨</span>
+            </div>
+            <div className="emergency-alert-body">
+              <div className="emergency-alert-title">
+                <strong>EMERGENCY SIGNAL PREEMPTION ACTIVE</strong>
+                <span className="emergency-badge">{dashboard.emergency.type ? dashboard.emergency.type.toUpperCase() : 'EMERGENCY'}</span>
+                <span className="emergency-badge direction">APPROACH: {dashboard.emergency.direction}</span>
+                {dashboard.emergency.vehicle_id != null && (
+                  <span className="emergency-badge vid">TRACK #{dashboard.emergency.vehicle_id}</span>
+                )}
+              </div>
+              <div className="emergency-alert-details">
+                Status: <strong>{dashboard.emergency.status || 'ACTIVE'}</strong> · Timer: <strong>{Number(dashboard.emergency.timer_remaining || 0).toFixed(1)}s remaining</strong> (Window: {dashboard.emergency.duration || 15}s) · Multi-frame Confirmed
+              </div>
+            </div>
+            <div className="emergency-alert-action">
+              <button
+                className="btn emergency-clear-btn"
+                onClick={async () => {
+                  try {
+                    await api.emergencyClear()
+                    notify('Emergency preemption cleared manually', 'success')
+                  } catch (e) {
+                    notify(`Failed to clear: ${e.message}`, 'error')
+                  }
+                }}
+              >
+                Clear Preemption
+              </button>
+            </div>
+          </div>
+        )}
+
         {renderPanel}
       </main>
 

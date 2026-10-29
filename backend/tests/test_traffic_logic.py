@@ -147,3 +147,404 @@ def test_only_one_green_and_proper_transition_cycle():
             break
     # The four phases must have appeared in a valid cycle
     assert "GREEN" in seen and "YELLOW" in seen and "ALL_RED" in seen
+
+
+# ============================================================================
+# PHASE 2: EMERGENCY VEHICLE DETECTION & PREEMPTION UNIT TESTS
+# ============================================================================
+
+def test_emergency_preemption_north():
+    """Emergency preemption safely routes green signal to NORTH."""
+    from backend.traffic.signal_controller import SignalController
+    calc = PriorityCalculator(min_green=5, max_green=40)
+    controller = SignalController(calc, yellow_duration=3.0, all_red_duration=1.0)
+    controller.current_direction = "SOUTH"
+    controller.signal_states = {"NORTH": "RED", "SOUTH": "GREEN", "EAST": "RED", "WEST": "RED"}
+
+    controller.preempt_emergency(direction="NORTH", duration=15.0, emergency_type="ambulance")
+    counts = {"NORTH": 0, "SOUTH": 20, "EAST": 5, "WEST": 5}
+    waits = {d: {"avg_wait": 0.0} for d in ["NORTH", "SOUTH", "EAST", "WEST"]}
+
+    # Advance through clearance (3s YELLOW + 1s ALL_RED)
+    for _ in range(10):
+        controller.step(0.5, counts, waits)
+
+    state = controller.get_state()
+    assert state["current_direction"] == "NORTH"
+    assert state["phase_state"] == "GREEN"
+    assert state["signal_states"]["NORTH"] == "GREEN"
+    assert state["emergency"]["active"] is True
+    assert state["emergency"]["direction"] == "NORTH"
+    assert state["emergency"]["type"] == "ambulance"
+
+
+def test_emergency_preemption_south():
+    """Emergency preemption safely routes green signal to SOUTH."""
+    from backend.traffic.signal_controller import SignalController
+    calc = PriorityCalculator(min_green=5, max_green=40)
+    controller = SignalController(calc, yellow_duration=3.0, all_red_duration=1.0)
+    controller.current_direction = "NORTH"
+    controller.signal_states = {"NORTH": "GREEN", "SOUTH": "RED", "EAST": "RED", "WEST": "RED"}
+
+    controller.preempt_emergency(direction="SOUTH", duration=15.0, emergency_type="ambulance")
+    counts = {"NORTH": 10, "SOUTH": 0, "EAST": 0, "WEST": 0}
+    waits = {d: {"avg_wait": 0.0} for d in ["NORTH", "SOUTH", "EAST", "WEST"]}
+
+    for _ in range(10):
+        controller.step(0.5, counts, waits)
+
+    state = controller.get_state()
+    assert state["current_direction"] == "SOUTH"
+    assert state["phase_state"] == "GREEN"
+    assert state["signal_states"]["SOUTH"] == "GREEN"
+    assert state["emergency"]["active"] is True
+
+
+def test_emergency_preemption_east():
+    """Emergency preemption safely routes green signal to EAST."""
+    from backend.traffic.signal_controller import SignalController
+    calc = PriorityCalculator(min_green=5, max_green=40)
+    controller = SignalController(calc, yellow_duration=3.0, all_red_duration=1.0)
+    controller.current_direction = "WEST"
+    controller.signal_states = {"NORTH": "RED", "SOUTH": "RED", "EAST": "RED", "WEST": "GREEN"}
+
+    controller.preempt_emergency(direction="EAST", duration=15.0, emergency_type="fire_truck")
+    counts = {"NORTH": 5, "SOUTH": 5, "EAST": 0, "WEST": 10}
+    waits = {d: {"avg_wait": 0.0} for d in ["NORTH", "SOUTH", "EAST", "WEST"]}
+
+    for _ in range(10):
+        controller.step(0.5, counts, waits)
+
+    state = controller.get_state()
+    assert state["current_direction"] == "EAST"
+    assert state["phase_state"] == "GREEN"
+    assert state["signal_states"]["EAST"] == "GREEN"
+    assert state["emergency"]["active"] is True
+    assert state["emergency"]["type"] == "fire_truck"
+
+
+def test_emergency_preemption_west():
+    """Emergency preemption safely routes green signal to WEST."""
+    from backend.traffic.signal_controller import SignalController
+    calc = PriorityCalculator(min_green=5, max_green=40)
+    controller = SignalController(calc, yellow_duration=3.0, all_red_duration=1.0)
+    controller.current_direction = "EAST"
+    controller.signal_states = {"NORTH": "RED", "SOUTH": "RED", "EAST": "GREEN", "WEST": "RED"}
+
+    controller.preempt_emergency(direction="WEST", duration=15.0, emergency_type="police")
+    counts = {"NORTH": 5, "SOUTH": 5, "EAST": 10, "WEST": 0}
+    waits = {d: {"avg_wait": 0.0} for d in ["NORTH", "SOUTH", "EAST", "WEST"]}
+
+    for _ in range(10):
+        controller.step(0.5, counts, waits)
+
+    state = controller.get_state()
+    assert state["current_direction"] == "WEST"
+    assert state["phase_state"] == "GREEN"
+    assert state["signal_states"]["WEST"] == "GREEN"
+    assert state["emergency"]["active"] is True
+    assert state["emergency"]["type"] == "police"
+
+
+def test_emergency_safe_yellow_transition():
+    """Conflicting active green must first switch to YELLOW (3.0s) and NEVER jump directly to RED/GREEN."""
+    from backend.traffic.signal_controller import SignalController
+    calc = PriorityCalculator()
+    controller = SignalController(calc, yellow_duration=3.0, all_red_duration=1.0)
+    controller.current_direction = "EAST"
+    controller.signal_states = {"NORTH": "RED", "SOUTH": "RED", "EAST": "GREEN", "WEST": "RED"}
+
+    controller.preempt_emergency(direction="NORTH", duration=15.0, emergency_type="ambulance")
+    # Immediately after preemption call, EAST must be YELLOW
+    assert controller.signal_states["EAST"] == "YELLOW"
+    assert controller.phase_state.value == "YELLOW"
+    assert controller.signal_states["NORTH"] == "RED"
+
+    # Step 1.5 seconds: must still be in YELLOW clearance
+    counts = {d: 0 for d in ["NORTH", "SOUTH", "EAST", "WEST"]}
+    waits = {d: {"avg_wait": 0.0} for d in ["NORTH", "SOUTH", "EAST", "WEST"]}
+    controller.step(1.5, counts, waits)
+    assert controller.phase_state.value == "YELLOW"
+    assert controller.signal_states["EAST"] == "YELLOW"
+    assert controller.signal_states["NORTH"] == "RED"
+
+
+def test_emergency_all_red_before_green():
+    """All signals must be RED during all-red clearance before the emergency approach turns GREEN."""
+    from backend.traffic.signal_controller import SignalController
+    calc = PriorityCalculator()
+    controller = SignalController(calc, yellow_duration=3.0, all_red_duration=1.0)
+    controller.current_direction = "EAST"
+    controller.signal_states = {"NORTH": "RED", "SOUTH": "RED", "EAST": "GREEN", "WEST": "RED"}
+
+    controller.preempt_emergency(direction="NORTH", duration=15.0, emergency_type="ambulance")
+    counts = {d: 0 for d in ["NORTH", "SOUTH", "EAST", "WEST"]}
+    waits = {d: {"avg_wait": 0.0} for d in ["NORTH", "SOUTH", "EAST", "WEST"]}
+
+    # Advance through 3.0s YELLOW
+    controller.step(3.0, counts, waits)
+
+    # Now in ALL_RED clearance (1.0s duration)
+    assert controller.phase_state.value == "ALL_RED"
+    for d in ["NORTH", "SOUTH", "EAST", "WEST"]:
+        assert controller.signal_states[d] == "RED", f"Signal {d} is not RED during ALL_RED clearance"
+    assert controller.signal_states["NORTH"] == "RED"
+
+    # Advance past 1.0s ALL_RED
+    controller.step(1.1, counts, waits)
+    assert controller.phase_state.value == "GREEN"
+    assert controller.signal_states["NORTH"] == "GREEN"
+
+
+def test_emergency_only_one_green_safety_invariant():
+    """Safety Invariant: At no point during emergency transitions can multiple green lights coexist."""
+    from backend.traffic.signal_controller import SignalController
+    calc = PriorityCalculator(min_green=5, max_green=40)
+    controller = SignalController(calc, yellow_duration=3.0, all_red_duration=1.0)
+    controller.current_direction = "SOUTH"
+    controller.signal_states = {"NORTH": "RED", "SOUTH": "GREEN", "EAST": "RED", "WEST": "RED"}
+
+    controller.preempt_emergency(direction="WEST", duration=10.0, emergency_type="fire_truck")
+    counts = {"NORTH": 5, "SOUTH": 5, "EAST": 5, "WEST": 5}
+    waits = {d: {"avg_wait": 10.0} for d in ["NORTH", "SOUTH", "EAST", "WEST"]}
+
+    # Simulate 50 discrete time steps through preemption and clearance
+    for _ in range(50):
+        state = controller.step(0.4, counts, waits)
+        green_count = sum(1 for d in ["NORTH", "SOUTH", "EAST", "WEST"] if state["signal_states"][d] == "GREEN")
+        assert green_count <= 1, f"Safety violation: multiple greens detected: {state['signal_states']}"
+        if state["phase_state"] == "GREEN":
+            assert green_count == 1
+        elif state["phase_state"] in ("YELLOW", "ALL_RED"):
+            assert green_count == 0
+
+
+def test_normal_adaptive_resumes_after_emergency():
+    """Once preemption timer expires, emergency clears and normal adaptive signal control safely resumes."""
+    from backend.traffic.signal_controller import SignalController
+    calc = PriorityCalculator(min_green=5, max_green=40)
+    controller = SignalController(calc, yellow_duration=2.0, all_red_duration=1.0)
+    controller.current_direction = "NORTH"
+    controller.phase_state = controller.phase_state.GREEN
+    controller.signal_states = {"NORTH": "GREEN", "SOUTH": "RED", "EAST": "RED", "WEST": "RED"}
+
+    # Preempt NORTH for 4.0 seconds
+    controller.preempt_emergency(direction="NORTH", duration=4.0, emergency_type="ambulance")
+    counts = {"NORTH": 0, "SOUTH": 30, "EAST": 2, "WEST": 0}
+    waits = {"NORTH": {"avg_wait": 0}, "SOUTH": {"avg_wait": 25}, "EAST": {"avg_wait": 0}, "WEST": {"avg_wait": 0}}
+
+    # Step through 4.0 seconds of emergency green
+    controller.step(4.5, counts, waits)
+
+    # Preemption timer expired -> emergency is cleared and cycle moves to yellow
+    assert controller.emergency_active is False
+    assert controller.emergency_status in ("CLEARED", "IDLE")
+
+    # Step through clearance (2s yellow + 1s all-red)
+    controller.step(2.0, counts, waits)
+    controller.step(1.5, counts, waits)
+
+    # Next direction should be picked adaptively (SOUTH has highest traffic & wait)
+    state = controller.get_state()
+    assert state["current_direction"] == "SOUTH"
+    assert state["phase_state"] == "GREEN"
+    assert state["signal_states"]["SOUTH"] == "GREEN"
+
+
+def test_duplicate_emergency_no_repeated_preemption():
+    """Repeated triggers for the same active emergency extend/maintain duration without corrupting phases."""
+    from backend.traffic.signal_controller import SignalController
+    calc = PriorityCalculator(min_green=5, max_green=40)
+    controller = SignalController(calc, yellow_duration=3.0, all_red_duration=1.0)
+    controller.current_direction = "NORTH"
+    controller.phase_state = controller.phase_state.GREEN
+    controller.signal_states = {"NORTH": "GREEN", "SOUTH": "RED", "EAST": "RED", "WEST": "RED"}
+
+    # First preemption call
+    controller.preempt_emergency(direction="NORTH", duration=15.0, emergency_type="ambulance")
+    assert controller.current_direction == "NORTH"
+    assert controller.signal_states["NORTH"] == "GREEN"
+
+    # Repeated identical call must not switch to YELLOW or reset active status
+    controller.preempt_emergency(direction="NORTH", duration=20.0, emergency_type="ambulance")
+    assert controller.current_direction == "NORTH"
+    assert controller.signal_states["NORTH"] == "GREEN"
+    assert controller.emergency_timer_remaining == 20.0
+    assert controller.phase_state.value == "GREEN"
+
+
+def test_emergency_multi_frame_confirmation():
+    """Anti-flicker test: Single-frame detection must NOT trigger preemption until 5 consecutive frames confirm."""
+    import time
+    from backend.detection.tracker import TrackedVehicle
+
+    vehicle = TrackedVehicle(
+        track_id=101,
+        class_name="car",
+        bbox=[100, 100, 200, 200],
+        confidence=0.85,
+        timestamp=time.time()
+    )
+    vehicle.direction = "NORTH"
+
+    # Frame 1 to 4: detected, but fewer than 5 consecutive frames
+    for f in range(1, 5):
+        became_active = vehicle.update_emergency(
+            is_detected=True,
+            emergency_type="ambulance",
+            confidence=0.88,
+            confirmation_frames=5
+        )
+        assert became_active is False
+        assert vehicle.emergency_active is False
+        assert vehicle.emergency_detection_frames == f
+
+    # False-alarm flicker: detection drops on frame 5 -> resets frame counter
+    became_active = vehicle.update_emergency(
+        is_detected=False,
+        confirmation_frames=5
+    )
+    assert became_active is False
+    assert vehicle.emergency_active is False
+    assert vehicle.emergency_detection_frames == 0
+
+    # Now 5 consecutive real frames
+    for f in range(1, 5):
+        vehicle.update_emergency(is_detected=True, emergency_type="ambulance", confidence=0.9, confirmation_frames=5)
+        assert vehicle.emergency_active is False
+
+    # 5th frame reaches confirmation threshold
+    became_active = vehicle.update_emergency(is_detected=True, emergency_type="ambulance", confidence=0.9, confirmation_frames=5)
+    assert became_active is True
+    assert vehicle.emergency_active is True
+    assert vehicle.emergency_type == "ambulance"
+
+
+# ============================================================================
+# PHASE 3: EMERGENCY MODEL VALIDATION & INTEGRATION TESTS
+# ============================================================================
+
+def test_emergency_detector_load_and_dynamic_classes():
+    """Verify VehicleDetector loads emergency_best.pt and resolves classes dynamically."""
+    from backend.detection.detector import VehicleDetector
+    detector = VehicleDetector(emergency_model_path="models/emergency_best.pt")
+    assert detector.has_emergency_model is True
+    assert "emergency_best.pt" in detector.emergency_model_status
+    assert hasattr(detector, "active_emergency_map")
+    assert "ambulance" in detector.active_emergency_map.values()
+
+
+def test_emergency_detector_missing_fallback():
+    """Verify VehicleDetector cleanly falls back when model file is missing without crashing."""
+    import numpy as np
+    from backend.detection.detector import VehicleDetector
+    detector = VehicleDetector(emergency_model_path="models/non_existent_weights.pt")
+    assert detector.has_emergency_model is False
+    assert "Awaiting fine-tuned model" in detector.emergency_model_status
+    dummy_frame = np.zeros((300, 300, 3), dtype=np.uint8)
+    detections = detector.detect_emergency(dummy_frame)
+    assert detections == []
+
+
+def test_tracker_standalone_emergency_detection():
+    """Verify tracker manages emergency vehicle even when primary detector misses it."""
+    import time
+    from backend.detection.tracker import VehicleTrackerManager
+    from backend.traffic.lane_manager import LaneManager
+
+    tracker = VehicleTrackerManager(emergency_confirmation_frames=3)
+    lane_mgr = LaneManager()
+
+    # Feed 3 consecutive frames with an emergency ambulance detection in the SOUTH approach
+    em_detection = [{
+        "bbox": [550, 650, 650, 750],
+        "class_id": 0,
+        "class_name": "ambulance",
+        "confidence": 0.92,
+        "center": (600, 700)
+    }]
+
+    for _ in range(2):
+        tracker.update_with_yolo_tracks(
+            None, lane_mgr, 1280, 720, time.time(),
+            signal_states={"SOUTH": "RED"},
+            emergency_detections=em_detection
+        )
+        assert tracker.get_active_emergency() is None
+
+    # 3rd frame confirms emergency
+    tracker.update_with_yolo_tracks(
+        None, lane_mgr, 1280, 720, time.time(),
+        signal_states={"SOUTH": "RED"},
+        emergency_detections=em_detection
+    )
+    confirmed = tracker.get_active_emergency()
+    assert confirmed is not None
+    assert confirmed.emergency_active is True
+    assert confirmed.emergency_type == "ambulance"
+    assert confirmed.direction == "SOUTH"
+
+
+def test_end_to_end_emergency_detection_preemption_flow():
+    """Full pipeline: 5 confirmed video frames trigger safe signal preemption to SOUTH."""
+    import time
+    from backend.detection.tracker import VehicleTrackerManager
+    from backend.traffic.lane_manager import LaneManager
+    from backend.traffic.priority import PriorityCalculator
+    from backend.traffic.signal_controller import SignalController
+
+    calc = PriorityCalculator(min_green=5, max_green=40)
+    controller = SignalController(calc, yellow_duration=3.0, all_red_duration=1.0)
+    controller.current_direction = "NORTH"
+    controller.signal_states = {"NORTH": "GREEN", "SOUTH": "RED", "EAST": "RED", "WEST": "RED"}
+
+    tracker = VehicleTrackerManager(emergency_confirmation_frames=5)
+    lane_mgr = LaneManager()
+
+    em_detection = [{
+        "bbox": [550, 650, 650, 750],
+        "class_id": 0,
+        "class_name": "ambulance",
+        "confidence": 0.95,
+        "center": (600, 700)
+    }]
+
+    # Step 5 consecutive frames through tracker
+    for f in range(5):
+        tracker.update_with_yolo_tracks(
+            None, lane_mgr, 1280, 720, time.time(),
+            signal_states=controller.get_signal_states(),
+            emergency_detections=em_detection
+        )
+
+    confirmed = tracker.get_active_emergency()
+    assert confirmed is not None
+    assert confirmed.direction == "SOUTH"
+
+    # Preempt controller
+    controller.preempt_emergency(
+        direction=confirmed.direction,
+        duration=15.0,
+        emergency_type=confirmed.emergency_type,
+        vehicle_id=confirmed.id,
+        confidence=confirmed.emergency_confidence
+    )
+
+    # Immediately after preemption, NORTH (current green) must yield to YELLOW
+    assert controller.signal_states["NORTH"] == "YELLOW"
+    assert controller.signal_states["SOUTH"] == "RED"
+
+    # Step through clearance (3s yellow + 1s all-red)
+    counts = {"NORTH": 5, "SOUTH": 0, "EAST": 0, "WEST": 0}
+    waits = {d: {"avg_wait": 0.0} for d in ["NORTH", "SOUTH", "EAST", "WEST"]}
+    controller.step(3.0, counts, waits)
+    assert controller.phase_state.value == "ALL_RED"
+    assert controller.signal_states["SOUTH"] == "RED"
+
+    controller.step(1.1, counts, waits)
+    assert controller.phase_state.value == "GREEN"
+    assert controller.signal_states["SOUTH"] == "GREEN"
+    assert controller.signal_states["NORTH"] == "RED"
+    assert controller.emergency_active is True
+
+

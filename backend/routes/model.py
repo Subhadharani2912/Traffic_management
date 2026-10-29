@@ -123,5 +123,12 @@ def get_model_and_dataset_status():
             "iou_threshold": config.iou_threshold,
             "target_classes": ["car", "van", "bus", "others"] if has_custom else ["car", "motorcycle", "bus", "truck"]
         },
+        "emergency_model": {
+            "configured_path": config.emergency_model_path,
+            "status": "Architecture ready (awaiting fine-tuned model weights)" if not Path(config.emergency_model_path).exists() else "Emergency weights loaded",
+            "target_classes": config.emergency_classes,
+            "confirmation_frames_required": config.emergency_confirmation_frames,
+            "preemption_duration": config.emergency_preemption_duration
+        },
         "metrics": metrics
     }

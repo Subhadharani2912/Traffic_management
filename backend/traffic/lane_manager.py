@@ -92,12 +92,24 @@ class LaneManager:
         """Vehicles inside intersection center are crossing and should not be counted as waiting"""
         return self.is_inside_box(cx, cy, self.intersection_box, width, height)
 
-    def classify_direction(self, cx: float, cy: float, width: int, height: int) -> Optional[str]:
+    def classify_direction(
+        self, cx: float, cy: float, width: int, height: int, fallback_nearest: bool = False
+    ) -> Optional[str]:
         """
         Determines which approach direction the vehicle belongs to.
         Returns 'NORTH', 'SOUTH', 'EAST', 'WEST', or None.
+        If fallback_nearest is True, calculates closest approach direction based on geometric quadrant.
         """
         for direction, box in self.rois.items():
             if self.is_inside_box(cx, cy, box, width, height):
                 return direction
+        if fallback_nearest and width > 0 and height > 0:
+            nx = cx / width
+            ny = cy / height
+            dx = nx - 0.5
+            dy = ny - 0.5
+            if abs(dx) >= abs(dy):
+                return "WEST" if dx < 0 else "EAST"
+            else:
+                return "NORTH" if dy < 0 else "SOUTH"
         return None

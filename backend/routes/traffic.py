@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 
 from backend.config import load_config, save_config, TrafficSystemConfig
-from backend.database.database import get_recent_logs, log_event
+from backend.database.database import get_recent_logs, log_event, get_recent_emergency_events
 from backend.services.traffic_engine import engine
 
 router = APIRouter(prefix="/api/traffic", tags=["Traffic"])
@@ -18,6 +18,14 @@ router = APIRouter(prefix="/api/traffic", tags=["Traffic"])
 class ModeSwitchRequest(BaseModel):
     mode: str  # 'simulation' or 'video'
     video_name: Optional[str] = None
+
+
+class EmergencyPreemptionRequest(BaseModel):
+    direction: str = "NORTH"             # 'NORTH', 'SOUTH', 'EAST', 'WEST'
+    emergency_type: str = "ambulance"    # 'ambulance', 'fire_truck', 'police'
+    duration: float = 15.0               # seconds of green light assigned
+    vehicle_id: Optional[int] = None
+    confidence: Optional[float] = 0.95
 
 
 class ControlRequest(BaseModel):
@@ -168,3 +176,37 @@ def manual_signal(req: ManualSignalRequest):
 @router.post("/signal/adaptive")
 def set_adaptive(req: AdaptiveRequest):
     return engine.set_adaptive(req.adaptive)
+
+
+@router.post("/emergency-preemption")
+def emergency_preemption(req: EmergencyPreemptionRequest):
+    """
+    TEST/SIMULATION & CONTROL ENDPOINT:
+    Simulates an approaching emergency vehicle to demonstrate safe signal preemption.
+    Transitions safely: Current GREEN -> YELLOW (clearance) -> ALL_RED -> Emergency GREEN.
+    """
+    result = engine.trigger_emergency_preemption(
+        direction=req.direction,
+        duration=req.duration or 15.0,
+        emergency_type=req.emergency_type or "ambulance",
+        vehicle_id=req.vehicle_id,
+        confidence=req.confidence or 0.95
+    )
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("detail"))
+    return result
+
+
+@router.post("/emergency-clear")
+def clear_emergency():
+    """Clears active emergency preemption mode and safely resumes normal adaptive control."""
+    result = engine.clear_emergency_preemption()
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("detail"))
+    return result
+
+
+@router.get("/emergency-events")
+def list_emergency_events(limit: int = 20):
+    """Retrieves recent emergency events logged in SQLite."""
+    return get_recent_emergency_events(limit)

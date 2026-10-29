@@ -22,13 +22,19 @@ export default function IntersectionView({ dashboard }) {
             {DIRECTIONS.map((d) => {
               const data = dashboard.directions?.[d] || {}
               const p = layout[d]
+              const isEmergency = dashboard.emergency?.active && dashboard.emergency.direction === d
               return (
-                <div className={`big-approach ${p.cls}`} key={d} style={p.pos}>
-                  <div className="approach-card">
+                <div className={`big-approach ${p.cls} ${isEmergency ? 'emergency-approach' : ''}`} key={d} style={p.pos}>
+                  <div className={`approach-card ${isEmergency ? 'emergency-card' : ''}`}>
                     <div className="approach-top">
                       <strong>{d}</strong>
                       <SignalLight state={data.signal_state || 'RED'} />
                     </div>
+                    {isEmergency && (
+                      <div className="approach-emergency-badge">
+                        🚨 {dashboard.emergency.type ? dashboard.emergency.type.toUpperCase() : 'EMERGENCY'} PREEMPTION
+                      </div>
+                    )}
                     <div className="approach-metrics">
                       <span>Count <b>{data.count ?? 0}</b></span>
                       <span>Density <b style={{ color: densityColor(data.density_level || 'LOW') }}>{data.density_level || 'LOW'}</b></span>
@@ -39,12 +45,19 @@ export default function IntersectionView({ dashboard }) {
               )
             })}
 
-            <div className="big-center">
-              <div className="big-center-top">
-                <span>NEXT</span>
-                <strong>{dashboard.next_direction}</strong>
-              </div>
-              <div className="big-timer">{Number(dashboard.remaining_green_time || 0).toFixed(0)}<small>s left</small></div>
+            <div className={`big-center ${dashboard.emergency?.active ? 'emergency-center' : ''}`}>
+              {dashboard.emergency?.active ? (
+                <div className="big-center-top emergency-text">
+                  <span>🚨 PREEMPTION</span>
+                  <strong>{dashboard.emergency.direction}</strong>
+                </div>
+              ) : (
+                <div className="big-center-top">
+                  <span>NEXT</span>
+                  <strong>{dashboard.next_direction}</strong>
+                </div>
+              )}
+              <div className="big-timer">{Number(dashboard.emergency?.active ? (dashboard.emergency.timer_remaining || 0) : (dashboard.remaining_green_time || 0)).toFixed(0)}<small>s left</small></div>
               <div className="big-center-state">{dashboard.active_signal_state}</div>
               <div className="big-center-bottom">
                 <span>Green {Number(dashboard.current_green_time_assigned || 0).toFixed(0)}s</span>
@@ -76,6 +89,33 @@ export default function IntersectionView({ dashboard }) {
               </div>
             ))}
           </div>
+
+          <div className="info-box">
+            <h4>Emergency Preemption</h4>
+            <div className="phase-row">
+              <span>Status</span>
+              <strong style={{ color: dashboard.emergency?.active ? '#ef4444' : '#22c55e' }}>
+                {dashboard.emergency?.active ? 'ACTIVE PREEMPTION' : 'NORMAL (STANDBY)'}
+              </strong>
+            </div>
+            {dashboard.emergency?.active && (
+              <>
+                <div className="phase-row">
+                  <span>Priority Approach</span>
+                  <strong style={{ color: '#f87171' }}>{dashboard.emergency.direction}</strong>
+                </div>
+                <div className="phase-row">
+                  <span>Vehicle Type</span>
+                  <strong>{dashboard.emergency.type ? dashboard.emergency.type.toUpperCase() : 'EMERGENCY'}</strong>
+                </div>
+                <div className="phase-row">
+                  <span>Window Remaining</span>
+                  <strong>{Number(dashboard.emergency.timer_remaining || 0).toFixed(1)}s</strong>
+                </div>
+              </>
+            )}
+          </div>
+
           <div className="info-box">
             <h4>Approach status</h4>
             {DIRECTIONS.map((d) => {

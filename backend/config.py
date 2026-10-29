@@ -1,3 +1,4 @@
+
 import os
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -34,6 +35,13 @@ class TrafficSystemConfig(BaseModel):
     target_classes: List[int] = [2, 3, 5, 7]  # COCO: 2:car, 3:motorcycle, 5:bus, 7:truck
     # UA-DETRAC class mapping: 0: car, 1: van, 2: bus, 3: others
 
+    # Emergency Vehicle & Preemption Settings
+    emergency_model_path: str = str(MODELS_DIR / "emergency_colab_best.pt")
+    emergency_confidence_threshold: float = 0.52
+    emergency_confirmation_frames: int = 5
+    emergency_preemption_duration: float = 15.0
+    emergency_classes: List[str] = ["ambulance", "fire_truck", "police"]
+
     # Signal & Adaptive Timing Settings
     min_green_time: int = 5
     max_green_time: int = 40
@@ -57,7 +65,7 @@ class TrafficSystemConfig(BaseModel):
 
     # Default ROIs (normalized 0.0 to 1.0 for 4-way intersection)
     # Each value is either [x1, y1, x2, y2] (axis-aligned box) or a quad:
-    #   [[x1,y1],[x2,y2],[x3,y3],[x4,y4]] (rotated / free-form lane marking)
+    #   [[x1,y1],[x2,y1],[x3,y2],[x4,y2]] (rotated / free-form lane marking)
     # NORTH: top approach
     # SOUTH: bottom approach
     # WEST: left approach
@@ -84,7 +92,19 @@ def load_config() -> TrafficSystemConfig:
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return TrafficSystemConfig(**data)
+                config = TrafficSystemConfig(**data)
+                if not Path(config.model_path).exists():
+                    config.model_path = str(MODELS_DIR / "yolov8n.pt")
+                if not Path(config.custom_model_path).exists():
+                    config.custom_model_path = str(MODELS_DIR / "best.pt")
+                if not Path(config.emergency_model_path).exists():
+                    if (MODELS_DIR / "emergency_colab_best.pt").exists():
+                        config.emergency_model_path = str(MODELS_DIR / "emergency_colab_best.pt")
+                    else:
+                        config.emergency_model_path = str(MODELS_DIR / "emergency_best.pt")
+                if config.selected_video and not Path(config.selected_video).exists():
+                    config.selected_video = None
+                return config
         except Exception as e:
             print(f"[Config] Error loading {CONFIG_FILE}, using defaults: {e}")
     config = TrafficSystemConfig()
